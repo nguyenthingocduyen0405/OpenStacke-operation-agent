@@ -1,0 +1,8 @@
+{
+  "rewrites": [
+    {
+      "source": "/(.*)",
+      "destination": "https://accepted-tulsa-victor-mineral.trycloudflare.com/$1"
+    }
+  ]
+}

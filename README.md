@@ -57,3 +57,9 @@ node server.js
 - `setup-model.ps1`: tải GGUF và tạo model tự động trên Windows
 
 Lưu ý: Kanana chủ yếu được huấn luyện cho tiếng Hàn và tiếng Anh. Model vẫn có thể trả lời tiếng Việt, nhưng chất lượng tiếng Việt có thể không bằng các model đa ngôn ngữ chuyên biệt.
+
+## Triển khai trên VM
+
+Thư mục `deploy` chứa service `systemd` và cấu hình Caddy mẫu. Ollama và ứng dụng Node.js chỉ lắng nghe trên localhost; Caddy là điểm truy cập HTTPS công khai.
+
+Do cổng 80/443 của OpenStack đang bị chặn, triển khai hiện dùng Cloudflare Quick Tunnel. `vercel.json` chuyển tiếp URL Vercel tới tunnel HTTPS đang hoạt động. Quick Tunnel phù hợp cho thử nghiệm; production nên chuyển sang Cloudflare Named Tunnel có tên miền ổn định.
