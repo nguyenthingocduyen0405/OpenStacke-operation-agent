@@ -83,10 +83,14 @@ async function handleApi(req, res, pathname) {
       res.on('close', () => {
         if (!res.writableEnded) controller.abort();
       });
+      let ragRows = [];
       let ragContext = '';
       try {
         const lastUserMessage = [...messages].reverse().find((message) => message.role === 'user');
-        if (lastUserMessage) ragContext = rag.buildContext(await rag.retrieve(lastUserMessage.content));
+        if (lastUserMessage) {
+          ragRows = await rag.retrieve(lastUserMessage.content);
+          ragContext = rag.buildContext(ragRows);
+        }
       } catch (error) {
         console.error(`RAG retrieval skipped: ${error.message}`);
       }
@@ -125,7 +129,45 @@ async function handleApi(req, res, pathname) {
         'Cache-Control': 'no-cache',
         'X-Content-Type-Options': 'nosniff'
       });
-      for await (const chunk of upstream.body) res.write(chunk);
+      const decoder = new TextDecoder();
+      let streamBuffer = '';
+      let finalLine = '';
+      for await (const chunk of upstream.body) {
+        streamBuffer += decoder.decode(chunk, { stream: true });
+        const lines = streamBuffer.split('\n');
+        streamBuffer = lines.pop();
+        for (const line of lines) {
+          if (!line) continue;
+          try {
+            if (JSON.parse(line).done) finalLine = line;
+            else res.write(`${line}\n`);
+          } catch {
+            res.write(`${line}\n`);
+          }
+        }
+      }
+      streamBuffer += decoder.decode();
+      if (streamBuffer) {
+        try {
+          if (JSON.parse(streamBuffer).done) finalLine = streamBuffer;
+          else res.write(`${streamBuffer}\n`);
+        } catch {
+          res.write(`${streamBuffer}\n`);
+        }
+      }
+      if (ragRows.length) {
+        const sources = ragRows.map((row, index) => {
+          const metadata = row.metadata || {};
+          return `[${index + 1}] ${metadata.title || metadata.source_path || '내부 자료'} (${metadata.source_path || 'unknown'})`;
+        });
+        res.write(`${JSON.stringify({
+          model: typeof body.model === 'string' && body.model ? body.model : DEFAULT_MODEL,
+          created_at: new Date().toISOString(),
+          message: { role: 'assistant', content: `\n\n참고 자료:\n${sources.join('\n')}` },
+          done: false
+        })}\n`);
+      }
+      if (finalLine) res.write(`${finalLine}\n`);
       return res.end();
     } catch (error) {
       if (error.name === 'AbortError') return;

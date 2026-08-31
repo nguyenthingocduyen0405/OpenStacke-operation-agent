@@ -2,7 +2,7 @@
   "rewrites": [
     {
       "source": "/(.*)",
-      "destination": "https://baker-defendant-then-materials.trycloudflare.com/$1"
+      "destination": "https://discussions-certain-stamps-trainer.trycloudflare.com/$1"
     }
   ]
 }
