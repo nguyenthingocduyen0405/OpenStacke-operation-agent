@@ -1,6 +1,7 @@
 const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
+const rag = require('./rag');
 
 const HOST = process.env.HOST || '127.0.0.1';
 const PORT = Number(process.env.PORT || 3000);
@@ -82,6 +83,20 @@ async function handleApi(req, res, pathname) {
       res.on('close', () => {
         if (!res.writableEnded) controller.abort();
       });
+      let ragContext = '';
+      try {
+        const lastUserMessage = [...messages].reverse().find((message) => message.role === 'user');
+        if (lastUserMessage) ragContext = rag.buildContext(await rag.retrieve(lastUserMessage.content));
+      } catch (error) {
+        console.error(`RAG retrieval skipped: ${error.message}`);
+      }
+
+      const systemContent = [
+        '당신은 JCloud와 OpenStack 사용자를 돕는 AI 어시스턴트입니다. 기본적으로 모든 답변을 자연스럽고 명확한 한국어로 작성하세요. 사용자가 다른 언어를 명시적으로 요청한 경우에만 해당 언어를 사용하세요.',
+        '검색된 문맥이 있으면 그 내용에 근거해 답하고, 사용한 정보 뒤에 [1], [2]처럼 출처 번호를 표시하세요. 문맥에 없는 사실은 추측하지 마세요. 현재 quota, VM 상태, IP, volume, image, flavor, security rule 같은 실시간 데이터는 이 지식 자료로 단정하지 말고 OpenStack API 확인이 필요하다고 안내하세요.',
+        ragContext ? `다음은 내부 지식 자료에서 검색한 문맥입니다:\n\n${ragContext}` : '이번 요청과 관련해 검색된 내부 지식 자료가 없습니다.'
+      ].join('\n\n');
+
       const upstream = await fetch(`${OLLAMA_URL}/api/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -90,7 +105,7 @@ async function handleApi(req, res, pathname) {
           messages: [
             {
               role: 'system',
-              content: '당신은 유용한 AI 어시스턴트입니다. 기본적으로 모든 답변을 자연스럽고 명확한 한국어로 작성하세요. 사용자가 다른 언어로 답변해 달라고 명시적으로 요청한 경우에만 해당 언어를 사용하세요.'
+              content: systemContent
             },
             ...messages
           ],

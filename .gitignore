@@ -5,3 +5,4 @@ node_modules/
 *.key
 ssh_known_hosts
 *.log
+*.zip

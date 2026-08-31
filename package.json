@@ -7,9 +7,14 @@
     "start": "node server.js",
     "dev": "node --watch server.js",
     "check": "node --check server.js && node --check public/app.js",
-    "test": "node --test"
+    "test": "node --test",
+    "rag:ingest": "node scripts/ingest-rag.js",
+    "rag:query": "node scripts/query-rag.js"
   },
   "engines": {
     "node": ">=18.17"
+  },
+  "dependencies": {
+    "pg": "^8.23.0"
   }
 }

@@ -21,12 +21,11 @@ Chatbot web tối giản, chạy hoàn toàn trên máy cá nhân với Ollama v
 3. Khởi động web:
 
    ```powershell
+   npm install
    node server.js
    ```
 
 4. Mở <http://127.0.0.1:3000>.
-
-Không cần chạy `npm install` vì dự án chỉ dùng thư viện có sẵn của Node.js.
 
 ## Cài model thủ công
 
@@ -49,9 +48,27 @@ $env:OLLAMA_MODEL = 'kanana-chat'
 node server.js
 ```
 
+## RAG với PostgreSQL/pgvector
+
+Ứng dụng tự bật RAG khi có `DATABASE_URL`. Model chat Kanana chỉ tạo câu trả lời; `embeddinggemma` được dùng riêng để tạo và tìm vector đa ngôn ngữ.
+
+```powershell
+ollama pull embeddinggemma
+$env:DATABASE_URL = 'postgresql://kanana_app:password@127.0.0.1:5432/kanana_rag'
+$env:OLLAMA_EMBED_MODEL = 'embeddinggemma'
+npm run rag:ingest -- .\rag-chunks.jsonl
+npm run rag:query -- 'JCloud에서 인스턴스를 만드는 방법'
+node server.js
+```
+
+Truy hồi kết hợp cosine distance của pgvector với full-text keyword score. Nếu database hoặc embedding tạm thời lỗi, chat vẫn hoạt động nhưng bỏ qua ngữ cảnh RAG. Các câu hỏi về trạng thái VM, quota, IP và tài nguyên hiện tại phải lấy từ OpenStack API thay vì corpus.
+
 ## Cấu trúc
 
 - `server.js`: máy chủ web và proxy streaming tới Ollama
+- `rag.js`: embedding và truy hồi lai từ PostgreSQL/pgvector
+- `scripts/ingest-rag.js`: import JSONL vào vector database
+- `scripts/query-rag.js`: kiểm tra kết quả retrieval từ dòng lệnh
 - `public/`: giao diện chatbot responsive
 - `Modelfile`: cấu hình Kanana cho Ollama
 - `setup-model.ps1`: tải GGUF và tạo model tự động trên Windows
