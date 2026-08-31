@@ -28,6 +28,13 @@ function readRecords(filePath) {
 
 async function main() {
   const records = readRecords(inputPath);
+  const corpusName = records[0]?.metadata?.corpus_name || records[0]?.id.split('-')[0];
+  if (!corpusName || !/^[a-z0-9][a-z0-9_-]*$/i.test(corpusName)) {
+    throw new Error('Unable to determine a safe corpus name.');
+  }
+  if (records.some((record) => !record.id.startsWith(`${corpusName}-`))) {
+    throw new Error(`All record IDs must use the ${corpusName}- prefix.`);
+  }
   console.log(`Embedding ${records.length} chunks with ${EMBEDDING_MODEL}...`);
 
   const embeddings = [];
@@ -60,6 +67,7 @@ async function main() {
         .update(items.map(({ record }) => record.text).join('\n'))
         .digest('hex');
       const documentMetadata = {
+        corpus_name: corpusName,
         title: items[0].record.metadata.title,
         corpus_version: items[0].record.metadata.corpus_version,
         source_path: sourcePath,
@@ -101,8 +109,22 @@ async function main() {
       }
       await client.query("UPDATE rag.documents SET status = 'indexed', updated_at = now() WHERE id = $1", [documentId]);
     }
+    const sourcePaths = [...grouped.keys()];
+    const removed = await client.query(
+      `DELETE FROM rag.documents d
+        WHERE NOT (d.source_name = ANY($2::text[]))
+          AND (
+            d.metadata->>'corpus_name' = $1
+            OR EXISTS (
+              SELECT 1 FROM rag.chunks c
+               WHERE c.document_id = d.id
+                 AND c.metadata->>'corpus_chunk_id' LIKE $3
+            )
+          )`,
+      [corpusName, sourcePaths, `${corpusName}-%`]
+    );
     await client.query('COMMIT');
-    console.log(`Indexed ${records.length} chunks from ${grouped.size} documents (${dimension} dimensions).`);
+    console.log(`Indexed ${records.length} chunks from ${grouped.size} documents (${dimension} dimensions); removed ${removed.rowCount} obsolete documents.`);
   } catch (error) {
     await client.query('ROLLBACK');
     throw error;
