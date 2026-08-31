@@ -14,6 +14,7 @@ Environment=HOST=127.0.0.1
 Environment=PORT=3000
 Environment=OLLAMA_URL=http://127.0.0.1:11434
 Environment=OLLAMA_MODEL=kanana-chat
+EnvironmentFile=-/etc/kanana-chat/database.env
 ExecStart=/usr/bin/node /opt/kanana-chat/server.js
 Restart=on-failure
 RestartSec=3
