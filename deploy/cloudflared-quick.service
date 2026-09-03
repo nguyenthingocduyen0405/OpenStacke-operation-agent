@@ -1,14 +1,14 @@
 [Unit]
-Description=Cloudflare Quick Tunnel for Kanana Chat
-After=network-online.target kanana-chat.service
+Description=Cloudflare Quick Tunnel for Open WebUI
+After=network-online.target docker.service
 Wants=network-online.target
-Requires=kanana-chat.service
+Requires=docker.service
 
 [Service]
 Type=simple
 User=ubuntu
 Group=ubuntu
-ExecStart=/usr/bin/cloudflared tunnel --no-autoupdate --protocol http2 --url http://127.0.0.1:3000
+ExecStart=/usr/local/bin/cloudflared tunnel --no-autoupdate --protocol http2 --url http://127.0.0.1:8080
 Restart=always
 RestartSec=5
 NoNewPrivileges=true

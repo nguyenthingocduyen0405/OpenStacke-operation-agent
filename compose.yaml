@@ -90,6 +90,7 @@ services:
       OPENAI_API_KEY: ${JCLOUD_API_KEY:-local-jcloud-key}
       ENABLE_OLLAMA_API: 'false'
       ENABLE_PERSISTENT_CONFIG: 'false'
+      ENABLE_SIGNUP: 'false'
       WEBUI_SECRET_KEY: ${WEBUI_SECRET_KEY:-local-open-webui-secret}
       RAG_EMBEDDING_ENGINE: ollama
       RAG_EMBEDDING_MODEL: embeddinggemma
