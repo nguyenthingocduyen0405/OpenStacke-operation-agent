@@ -6,3 +6,5 @@ node_modules/
 ssh_known_hosts
 *.log
 *.zip
+.docker-local/
+data/*.jsonl

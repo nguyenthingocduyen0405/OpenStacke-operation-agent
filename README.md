@@ -2,6 +2,68 @@
 
 Chatbot web tối giản, chạy hoàn toàn trên máy cá nhân với Ollama và **Kanana 1.5 2.1B Instruct Q4_K_M**.
 
+Nhánh hiện tại hỗ trợ **Open WebUI** làm giao diện chính, nhưng vẫn giữ backend Node.js, Ollama và RAG pgvector của dự án. Open WebUI gọi backend qua API tương thích OpenAI; vì vậy không cần bỏ phần đã phát triển trước đây.
+
+## Chạy với Open WebUI — khuyến nghị
+
+Yêu cầu: Docker Desktop có Docker Compose, RAM tối thiểu 8 GB và khoảng 8–12 GB dung lượng trống cho image, model và dữ liệu.
+
+1. Tạo tệp cấu hình:
+
+   ```powershell
+   Copy-Item .env.example .env
+   ```
+
+2. Mở `.env` và thay ít nhất `POSTGRES_PASSWORD`, `JCLOUD_API_KEY`, `WEBUI_SECRET_KEY` bằng các chuỗi ngẫu nhiên dài. Với mật khẩu PostgreSQL, dùng chữ và số để chuỗi kết nối không cần URL-encode.
+
+3. Khởi động trên CPU:
+
+   ```powershell
+   docker compose up -d --build
+   ```
+
+   Nếu máy có NVIDIA GPU và Docker Desktop đã bật GPU:
+
+   ```powershell
+   docker compose -f compose.yaml -f compose.gpu.yaml up -d --build
+   ```
+
+4. Theo dõi lần tải model đầu tiên:
+
+   ```powershell
+   docker compose logs -f model-init
+   ```
+
+5. Mở <http://localhost:8080>, tạo tài khoản đầu tiên rồi chọn model `kanana-chat`. Tài khoản đầu tiên của Open WebUI sẽ là quản trị viên.
+
+Kiến trúc khi chạy:
+
+```text
+Trình duyệt -> Open WebUI -> JCloud agent /v1
+                              |-> Ollama / Kanana
+                              +-> PostgreSQL / pgvector
+```
+
+Để nạp tài liệu RAG, đặt tệp tại `data/rag-chunks.jsonl` rồi chạy:
+
+```powershell
+docker compose exec jcloud-agent npm run rag:ingest -- /data/rag-chunks.jsonl
+```
+
+Xem trạng thái và dừng hệ thống:
+
+```powershell
+docker compose ps
+docker compose logs -f open-webui jcloud-agent
+docker compose down
+```
+
+`docker compose down` giữ lại model, database và tài khoản. Không thêm `-v` nếu không muốn xóa toàn bộ dữ liệu Docker volume.
+
+Muốn đổi model sau này, sửa `OLLAMA_MODEL` trong `.env` và cập nhật `Modelfile`, sau đó chạy lại `docker compose up -d --build`. API `/v1/models` và Open WebUI sẽ dùng tên model mới.
+
+## Chạy giao diện cũ không dùng Docker
+
 ## Yêu cầu
 
 - Windows 10/11, macOS hoặc Linux
@@ -66,6 +128,7 @@ Truy hồi kết hợp cosine distance của pgvector với full-text keyword sc
 ## Cấu trúc
 
 - `server.js`: máy chủ web và proxy streaming tới Ollama
+- `compose.yaml`: stack Open WebUI, agent, Ollama và pgvector
 - `rag.js`: embedding và truy hồi lai từ PostgreSQL/pgvector
 - `scripts/ingest-rag.js`: import JSONL vào vector database
 - `scripts/query-rag.js`: kiểm tra kết quả retrieval từ dòng lệnh
@@ -74,6 +137,8 @@ Truy hồi kết hợp cosine distance của pgvector với full-text keyword sc
 - `setup-model.ps1`: tải GGUF và tạo model tự động trên Windows
 
 Lưu ý: Kanana chủ yếu được huấn luyện cho tiếng Hàn và tiếng Anh. Model vẫn có thể trả lời tiếng Việt, nhưng chất lượng tiếng Việt có thể không bằng các model đa ngôn ngữ chuyên biệt.
+
+Kho mã hiện chưa có tệp `LICENSE`. Trước khi phát hành hoặc cho bên khác tái sử dụng, cần chọn và thêm giấy phép mã nguồn mở phù hợp.
 
 ## Triển khai trên VM
 

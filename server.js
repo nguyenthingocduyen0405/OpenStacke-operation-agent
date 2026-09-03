@@ -1,4 +1,5 @@
 const http = require('node:http');
+const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const rag = require('./rag');
@@ -7,6 +8,7 @@ const HOST = process.env.HOST || '127.0.0.1';
 const PORT = Number(process.env.PORT || 3000);
 const OLLAMA_URL = (process.env.OLLAMA_URL || 'http://127.0.0.1:11434').replace(/\/$/, '');
 const DEFAULT_MODEL = process.env.OLLAMA_MODEL || 'kanana-chat';
+const OPENAI_API_KEY = process.env.JCLOUD_API_KEY || '';
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const MIME_TYPES = {
   '.html': 'text/html; charset=utf-8',
@@ -38,12 +40,166 @@ async function readJson(req) {
 }
 
 async function ollamaJson(endpoint, options = {}) {
+  const { timeout = 5000, ...fetchOptions } = options;
   const response = await fetch(`${OLLAMA_URL}${endpoint}`, {
-    ...options,
-    signal: AbortSignal.timeout(5000)
+    ...fetchOptions,
+    signal: fetchOptions.signal || AbortSignal.timeout(timeout)
   });
   if (!response.ok) throw new Error(`Ollama 오류 ${response.status}.`);
   return response.json();
+}
+
+function authorized(req) {
+  if (!OPENAI_API_KEY) return true;
+  const expected = Buffer.from(`Bearer ${OPENAI_API_KEY}`);
+  const actual = Buffer.from(req.headers.authorization || '');
+  return expected.length === actual.length && crypto.timingSafeEqual(expected, actual);
+}
+
+function normalizeMessages(value) {
+  const messages = Array.isArray(value) ? value.slice(-30) : [];
+  const valid = messages.length && messages.every((message) =>
+    ['system', 'user', 'assistant'].includes(message?.role) &&
+    typeof message.content === 'string' &&
+    message.content.trim() && message.content.length <= 20_000
+  );
+  if (!valid) throw new Error('Invalid conversation messages.');
+  return messages;
+}
+
+async function prepareConversation(messages) {
+  let ragRows = [];
+  let ragContext = '';
+  try {
+    const lastUserMessage = [...messages].reverse().find((message) => message.role === 'user');
+    if (lastUserMessage) {
+      ragRows = await rag.retrieve(lastUserMessage.content);
+      ragContext = rag.buildContext(ragRows);
+    }
+  } catch (error) {
+    console.error(`RAG retrieval skipped: ${error.message}`);
+  }
+  const systemContent = [
+    '당신은 JCloud와 OpenStack 사용자를 돕는 AI 어시스턴트입니다. 기본적으로 모든 답변을 자연스럽고 명확한 한국어로 작성하세요. 사용자가 다른 언어를 명시적으로 요청한 경우에만 해당 언어를 사용하세요.',
+    '검색된 문맥이 있으면 그 내용에 근거해 답하고, 사용한 정보 뒤에 [1], [2]처럼 출처 번호를 표시하세요. 문맥에 없는 사실은 추측하지 마세요. 현재 quota, VM 상태, IP, volume, image, flavor, security rule 같은 실시간 데이터는 이 지식 자료로 단정하지 말고 OpenStack API 확인이 필요하다고 안내하세요.',
+    ragContext ? `다음은 내부 지식 자료에서 검색한 문맥입니다:\n\n${ragContext}` : '이번 요청과 관련해 검색된 내부 지식 자료가 없습니다.'
+  ].join('\n\n');
+  return { ragRows, messages: [{ role: 'system', content: systemContent }, ...messages] };
+}
+
+function sourceAppendix(rows) {
+  if (!rows.length) return '';
+  const sources = rows.map((row, index) => {
+    const metadata = row.metadata || {};
+    return `[${index + 1}] ${metadata.title || metadata.source_path || '내부 자료'} (${metadata.source_path || 'unknown'})`;
+  });
+  return `\n\n참고 자료:\n${sources.join('\n')}`;
+}
+
+function writeOpenAIChunk(res, id, model, delta, finishReason = null) {
+  res.write(`data: ${JSON.stringify({
+    id,
+    object: 'chat.completion.chunk',
+    created: Math.floor(Date.now() / 1000),
+    model,
+    choices: [{ index: 0, delta, finish_reason: finishReason }]
+  })}\n\n`);
+}
+
+async function handleOpenAI(req, res, pathname) {
+  if (!authorized(req)) {
+    return sendJson(res, 401, {
+      error: { message: 'Invalid API key.', type: 'authentication_error' }
+    });
+  }
+  if (req.method === 'GET' && pathname === '/v1/models') {
+    return sendJson(res, 200, {
+      object: 'list',
+      data: [{ id: DEFAULT_MODEL, object: 'model', created: 0, owned_by: 'jcloud-local' }]
+    });
+  }
+  if (req.method !== 'POST' || pathname !== '/v1/chat/completions') {
+    return sendJson(res, 404, {
+      error: { message: 'OpenAI-compatible endpoint not found.', type: 'invalid_request_error' }
+    });
+  }
+
+  try {
+    const body = await readJson(req);
+    const model = typeof body.model === 'string' && body.model ? body.model : DEFAULT_MODEL;
+    const prepared = await prepareConversation(normalizeMessages(body.messages));
+    const options = {
+      temperature: Number.isFinite(body.temperature) ? body.temperature : 0.7,
+      num_ctx: Number(process.env.OLLAMA_NUM_CTX || 4096)
+    };
+    if (body.stream === false) {
+      const data = await ollamaJson('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model, messages: prepared.messages, stream: false, options }),
+        timeout: Number(process.env.OLLAMA_TIMEOUT_MS || 120000)
+      });
+      const content = `${data.message?.content || ''}${sourceAppendix(prepared.ragRows)}`;
+      return sendJson(res, 200, {
+        id: `chatcmpl-${crypto.randomUUID()}`,
+        object: 'chat.completion',
+        created: Math.floor(Date.now() / 1000),
+        model,
+        choices: [{ index: 0, message: { role: 'assistant', content }, finish_reason: 'stop' }]
+      });
+    }
+
+    const controller = new AbortController();
+    res.on('close', () => {
+      if (!res.writableEnded) controller.abort();
+    });
+    const upstream = await fetch(`${OLLAMA_URL}/api/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model, messages: prepared.messages, stream: true, options }),
+      signal: controller.signal
+    });
+    if (!upstream.ok) {
+      const detail = await upstream.text();
+      return sendJson(res, upstream.status, {
+        error: { message: detail || `Ollama error ${upstream.status}.`, type: 'upstream_error' }
+      });
+    }
+
+    const id = `chatcmpl-${crypto.randomUUID()}`;
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+      'X-Accel-Buffering': 'no'
+    });
+    writeOpenAIChunk(res, id, model, { role: 'assistant' });
+    const decoder = new TextDecoder();
+    let buffer = '';
+    for await (const chunk of upstream.body) {
+      buffer += decoder.decode(chunk, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop();
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        const data = JSON.parse(line);
+        if (data.message?.content) {
+          writeOpenAIChunk(res, id, model, { content: data.message.content });
+        }
+      }
+    }
+    const appendix = sourceAppendix(prepared.ragRows);
+    if (appendix) writeOpenAIChunk(res, id, model, { content: appendix });
+    writeOpenAIChunk(res, id, model, {}, 'stop');
+    res.write('data: [DONE]\n\n');
+    return res.end();
+  } catch (error) {
+    if (error.name === 'AbortError') return;
+    if (!res.headersSent) {
+      return sendJson(res, 502, { error: { message: error.message, type: 'server_error' } });
+    }
+    return res.end();
+  }
 }
 
 async function handleApi(req, res, pathname) {
@@ -71,48 +227,25 @@ async function handleApi(req, res, pathname) {
   if (req.method === 'POST' && pathname === '/api/chat') {
     try {
       const body = await readJson(req);
-      const messages = Array.isArray(body.messages) ? body.messages.slice(-30) : [];
-      const valid = messages.length && messages.every((message) =>
-        ['user', 'assistant'].includes(message?.role) &&
-        typeof message.content === 'string' &&
-        message.content.trim() && message.content.length <= 20000
-      );
-      if (!valid) return sendJson(res, 400, { error: '대화 내용이 올바르지 않습니다.' });
+      let messages;
+      try {
+        messages = normalizeMessages(body.messages);
+      } catch {
+        return sendJson(res, 400, { error: '대화 내용이 올바르지 않습니다.' });
+      }
 
       const controller = new AbortController();
       res.on('close', () => {
         if (!res.writableEnded) controller.abort();
       });
-      let ragRows = [];
-      let ragContext = '';
-      try {
-        const lastUserMessage = [...messages].reverse().find((message) => message.role === 'user');
-        if (lastUserMessage) {
-          ragRows = await rag.retrieve(lastUserMessage.content);
-          ragContext = rag.buildContext(ragRows);
-        }
-      } catch (error) {
-        console.error(`RAG retrieval skipped: ${error.message}`);
-      }
-
-      const systemContent = [
-        '당신은 JCloud와 OpenStack 사용자를 돕는 AI 어시스턴트입니다. 기본적으로 모든 답변을 자연스럽고 명확한 한국어로 작성하세요. 사용자가 다른 언어를 명시적으로 요청한 경우에만 해당 언어를 사용하세요.',
-        '검색된 문맥이 있으면 그 내용에 근거해 답하고, 사용한 정보 뒤에 [1], [2]처럼 출처 번호를 표시하세요. 문맥에 없는 사실은 추측하지 마세요. 현재 quota, VM 상태, IP, volume, image, flavor, security rule 같은 실시간 데이터는 이 지식 자료로 단정하지 말고 OpenStack API 확인이 필요하다고 안내하세요.',
-        ragContext ? `다음은 내부 지식 자료에서 검색한 문맥입니다:\n\n${ragContext}` : '이번 요청과 관련해 검색된 내부 지식 자료가 없습니다.'
-      ].join('\n\n');
+      const prepared = await prepareConversation(messages);
 
       const upstream = await fetch(`${OLLAMA_URL}/api/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           model: typeof body.model === 'string' && body.model ? body.model : DEFAULT_MODEL,
-          messages: [
-            {
-              role: 'system',
-              content: systemContent
-            },
-            ...messages
-          ],
+          messages: prepared.messages,
           stream: true,
           options: { temperature: 0.7, num_ctx: 4096 }
         }),
@@ -155,15 +288,11 @@ async function handleApi(req, res, pathname) {
           res.write(`${streamBuffer}\n`);
         }
       }
-      if (ragRows.length) {
-        const sources = ragRows.map((row, index) => {
-          const metadata = row.metadata || {};
-          return `[${index + 1}] ${metadata.title || metadata.source_path || '내부 자료'} (${metadata.source_path || 'unknown'})`;
-        });
+      if (prepared.ragRows.length) {
         res.write(`${JSON.stringify({
           model: typeof body.model === 'string' && body.model ? body.model : DEFAULT_MODEL,
           created_at: new Date().toISOString(),
-          message: { role: 'assistant', content: `\n\n참고 자료:\n${sources.join('\n')}` },
+          message: { role: 'assistant', content: sourceAppendix(prepared.ragRows) },
           done: false
         })}\n`);
       }
@@ -197,6 +326,7 @@ function serveStatic(res, pathname) {
 const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+    if (url.pathname.startsWith('/v1/')) return handleOpenAI(req, res, url.pathname);
     if (url.pathname.startsWith('/api/')) return handleApi(req, res, url.pathname);
     if (req.method !== 'GET') return sendJson(res, 405, { error: '지원하지 않는 요청 방식입니다.' });
     return serveStatic(res, decodeURIComponent(url.pathname));

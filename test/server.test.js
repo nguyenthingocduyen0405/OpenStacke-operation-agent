@@ -18,6 +18,9 @@ test.before(async () => {
       for await (const chunk of req) requestBody += chunk;
       const parsed = JSON.parse(requestBody);
       assert.equal(parsed.model, 'kanana-chat:latest');
+      if (parsed.stream === false) {
+        return json(res, { message: { role: 'assistant', content: 'Hello!' }, done: true });
+      }
       res.writeHead(200, { 'Content-Type': 'application/x-ndjson' });
       res.write(`${JSON.stringify({ message: { role: 'assistant', content: 'Xin ' }, done: false })}\n`);
       res.end(`${JSON.stringify({ message: { role: 'assistant', content: 'chào!' }, done: true })}\n`);
@@ -32,7 +35,8 @@ test.before(async () => {
     env: {
       ...process.env,
       PORT: String(WEB_PORT),
-      OLLAMA_URL: `http://127.0.0.1:${OLLAMA_PORT}`
+      OLLAMA_URL: `http://127.0.0.1:${OLLAMA_PORT}`,
+      JCLOUD_API_KEY: 'test-key'
     },
     stdio: ['ignore', 'pipe', 'inherit']
   });
@@ -70,6 +74,53 @@ test('chuyển tiếp phản hồi chat dạng streaming', async () => {
   const chunks = (await response.text()).trim().split('\n').map(JSON.parse);
   assert.equal(chunks.map((chunk) => chunk.message.content).join(''), 'Xin chào!');
 });
+
+test('bảo vệ và liệt kê model qua OpenAI API', async () => {
+  const unauthorized = await fetch(`http://127.0.0.1:${WEB_PORT}/v1/models`);
+  assert.equal(unauthorized.status, 401);
+
+  const response = await fetch(`http://127.0.0.1:${WEB_PORT}/v1/models`, {
+    headers: { Authorization: 'Bearer test-key' }
+  });
+  assert.equal(response.status, 200);
+  const result = await response.json();
+  assert.equal(result.object, 'list');
+  assert.equal(result.data[0].id, 'kanana-chat');
+});
+
+test('trả lời OpenAI chat completion không streaming', async () => {
+  const response = await openAIChat(false);
+  assert.equal(response.status, 200);
+  const result = await response.json();
+  assert.equal(result.object, 'chat.completion');
+  assert.equal(result.choices[0].message.content, 'Hello!');
+});
+
+test('trả lời OpenAI chat completion dạng SSE', async () => {
+  const response = await openAIChat(true);
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get('content-type'), /text\/event-stream/);
+  const events = (await response.text()).trim().split('\n\n');
+  assert.equal(events.at(-1), 'data: [DONE]');
+  const chunks = events.slice(0, -1).map((event) => JSON.parse(event.slice(6)));
+  const content = chunks.map((chunk) => chunk.choices[0].delta.content || '').join('');
+  assert.equal(content, 'Xin chào!');
+});
+
+function openAIChat(stream) {
+  return fetch(`http://127.0.0.1:${WEB_PORT}/v1/chat/completions`, {
+    method: 'POST',
+    headers: {
+      Authorization: 'Bearer test-key',
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      model: 'kanana-chat:latest',
+      stream,
+      messages: [{ role: 'user', content: 'Xin chào' }]
+    })
+  });
+}
 
 function json(res, value) {
   res.writeHead(200, { 'Content-Type': 'application/json' });

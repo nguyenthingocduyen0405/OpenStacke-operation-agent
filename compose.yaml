@@ -1,0 +1,107 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: jcloud_rag
+      POSTGRES_USER: jcloud
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-local-postgres-password}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./deploy/init-rag.sql:/docker-entrypoint-initdb.d/10-init-rag.sql:ro
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U jcloud -d jcloud_rag
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:latest
+    volumes:
+      - ollama-data:/root/.ollama
+    healthcheck:
+      test:
+        - CMD
+        - ollama
+        - list
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    restart: unless-stopped
+
+  model-init:
+    image: ollama/ollama:latest
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    volumes:
+      - ./Modelfile:/model/Modelfile:ro
+    entrypoint:
+      - /bin/sh
+      - -c
+    command:
+      - |
+        set -eu
+        ollama show ${OLLAMA_MODEL:-kanana-chat} >/dev/null 2>&1 || \
+          ollama create ${OLLAMA_MODEL:-kanana-chat} -f /model/Modelfile
+        ollama show embeddinggemma >/dev/null 2>&1 || \
+          ollama pull embeddinggemma
+    depends_on:
+      ollama:
+        condition: service_healthy
+    restart: 'no'
+
+  jcloud-agent:
+    build:
+      context: .
+    environment:
+      OLLAMA_URL: http://ollama:11434
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-kanana-chat}
+      OLLAMA_NUM_CTX: ${OLLAMA_NUM_CTX:-4096}
+      OLLAMA_TIMEOUT_MS: ${OLLAMA_TIMEOUT_MS:-300000}
+      OLLAMA_EMBED_MODEL: embeddinggemma
+      DATABASE_URL: postgresql://jcloud:${POSTGRES_PASSWORD:-local-postgres-password}@postgres:5432/jcloud_rag
+      JCLOUD_API_KEY: ${JCLOUD_API_KEY:-local-jcloud-key}
+    volumes:
+      - ./data:/data:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      model-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - fetch('http://127.0.0.1:3000/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:v0.11.3
+    ports:
+      - ${OPEN_WEBUI_BIND:-127.0.0.1}:${OPEN_WEBUI_PORT:-8080}:8080
+    environment:
+      OPENAI_API_BASE_URL: http://jcloud-agent:3000/v1
+      OPENAI_API_KEY: ${JCLOUD_API_KEY:-local-jcloud-key}
+      ENABLE_OLLAMA_API: 'false'
+      ENABLE_PERSISTENT_CONFIG: 'false'
+      WEBUI_SECRET_KEY: ${WEBUI_SECRET_KEY:-local-open-webui-secret}
+      RAG_EMBEDDING_ENGINE: ollama
+      RAG_EMBEDDING_MODEL: embeddinggemma
+      RAG_OLLAMA_BASE_URL: http://ollama:11434
+    volumes:
+      - open-webui-data:/app/backend/data
+    depends_on:
+      jcloud-agent:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
+  ollama-data:
+  open-webui-data:
