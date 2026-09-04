@@ -36,7 +36,7 @@ function addMessage(role, content = '', extraClass = '') {
   article.className = `message ${role} ${extraClass}`.trim();
   const avatar = document.createElement('div');
   avatar.className = 'avatar';
-  avatar.textContent = role === 'user' ? '나' : 'K';
+  avatar.textContent = role === 'user' ? '나' : 'Q';
   const bubble = document.createElement('div');
   bubble.className = 'bubble';
   bubble.textContent = content;
@@ -50,8 +50,8 @@ async function loadStatus() {
   try {
     const [healthResponse, modelsResponse] = await Promise.all([fetch('/api/health'), fetch('/api/models')]);
     const health = await healthResponse.json();
-    if (!healthResponse.ok) throw new Error(health.error);
-    setConnection('online', `Ollama ${health.version} 실행 중`);
+    if (!healthResponse.ok || !health.ok) throw new Error(health.error || 'LLM API unavailable');
+    setConnection('online', `Qwen ${health.defaultModel} 연결됨`);
 
     if (modelsResponse.ok) {
       const data = await modelsResponse.json();
@@ -63,11 +63,11 @@ async function loadStatus() {
         option.value = option.textContent = name;
         modelSelect.append(option);
       }
-      const exactDefault = names.find((name) => name === data.defaultModel || name.startsWith(`${data.defaultModel}:`));
+      const exactDefault = names.find((name) => name === data.defaultModel);
       if (exactDefault) modelSelect.value = exactDefault;
     }
-  } catch (error) {
-    setConnection('offline', 'Ollama가 준비되지 않았습니다');
+  } catch {
+    setConnection('offline', 'Qwen API에 연결할 수 없습니다');
   }
 }
 
@@ -93,7 +93,7 @@ async function sendMessage(text) {
     });
     if (!response.ok) {
       const data = await response.json().catch(() => ({}));
-      throw new Error(data.error || `Lỗi máy chủ (${response.status})`);
+      throw new Error(data.error || `서버 오류 (${response.status})`);
     }
 
     const reader = response.body.getReader();
@@ -110,7 +110,6 @@ async function sendMessage(text) {
         if (data.error) throw new Error(data.error);
         if (data.message?.content) {
           assistantText += data.message.content;
-          assistantText = assistantText.replace(/<\|(?:eot_id|end_of_text)\|>/g, '');
           responseMessage.bubble.textContent = assistantText;
           messagesEl.scrollTop = messagesEl.scrollHeight;
         }
@@ -126,7 +125,7 @@ async function sendMessage(text) {
     } else {
       responseMessage.article.classList.add('error');
       responseMessage.bubble.textContent = `응답할 수 없습니다: ${error.message}`;
-      setConnection('offline', 'Ollama 호출 중 오류 발생');
+      setConnection('offline', 'Qwen API 호출 중 오류 발생');
     }
   } finally {
     responseMessage.article.classList.remove('thinking');

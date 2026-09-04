@@ -1,18 +1,18 @@
 {
-  "name": "kanana-ollama-chat",
+  "name": "jcloud-qwen-agent",
   "version": "1.0.0",
   "private": true,
-  "description": "Chatbot web cuc bo su dung Ollama va Kanana",
+  "description": "JCloud assistant using the hosted Qwen API and local RAG embeddings",
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
-    "check": "node --check server.js && node --check public/app.js",
+    "check": "node --check server.js && node --check llm.js && node --check public/app.js",
     "test": "node --test",
     "rag:ingest": "node scripts/ingest-rag.js",
     "rag:query": "node scripts/query-rag.js"
   },
   "engines": {
-    "node": ">=18.17"
+    "node": ">=20"
   },
   "dependencies": {
     "pg": "^8.23.0"

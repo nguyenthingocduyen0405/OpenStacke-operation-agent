@@ -3,59 +3,59 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="Ollama로 로컬에서 실행되는 Kanana 챗봇">
-  <title>Kanana Local Chat</title>
+  <meta name="description" content="Qwen API 기반 JCloud AI 챗봇">
+  <title>JCloud Qwen Chat</title>
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
   <main class="app-shell">
     <aside class="sidebar">
       <div class="brand">
-        <div class="logo" aria-hidden="true">K</div>
-        <div><strong>Kanana</strong><span>Local AI</span></div>
+        <div class="logo" aria-hidden="true">Q</div>
+        <div><strong>JCloud Qwen</strong><span>Remote AI</span></div>
       </div>
 
       <button id="new-chat" class="new-chat" type="button"><span>＋</span> 새 대화</button>
 
       <div class="privacy-note">
         <span class="privacy-icon">⌂</span>
-        <div><strong>로컬 개인정보 보호</strong><p>메시지는 이 기기의 Ollama로만 전송됩니다.</p></div>
+        <div><strong>사내 LLM API</strong><p>메시지는 허용된 네트워크를 통해 Qwen 서버로 전송됩니다.</p></div>
       </div>
 
       <div class="sidebar-footer">
         <label for="model-select">모델</label>
-        <select id="model-select" aria-label="모델 선택"><option value="kanana-chat">kanana-chat</option></select>
-        <div id="connection" class="connection"><i></i><span>Ollama 확인 중…</span></div>
+        <select id="model-select" aria-label="모델 선택"><option value="qwen3.8-27b">qwen3.8-27b</option></select>
+        <div id="connection" class="connection"><i></i><span>Qwen API 확인 중…</span></div>
       </div>
     </aside>
 
     <section class="chat-panel">
       <header class="mobile-header">
-        <div class="brand"><div class="logo">K</div><strong>Kanana</strong></div>
-        <div id="mobile-status" class="status-dot" title="Ollama 상태"></div>
+        <div class="brand"><div class="logo">Q</div><strong>JCloud Qwen</strong></div>
+        <div id="mobile-status" class="status-dot" title="Qwen API 상태"></div>
       </header>
 
       <div id="messages" class="messages" aria-live="polite">
         <section id="welcome" class="welcome">
-          <div class="hero-mark">K</div>
-          <p class="eyebrow">로컬 AI 어시스턴트</p>
+          <div class="hero-mark">Q</div>
+          <p class="eyebrow">JCloud AI 어시스턴트</p>
           <h1>안녕하세요! 무엇을 도와드릴까요?</h1>
-          <p class="subtitle">Kanana가 도와드릴게요. 모든 처리는 사용자의 컴퓨터에서 이루어집니다.</p>
+          <p class="subtitle">Qwen이 JCloud와 OpenStack 관련 질문에 답해 드립니다.</p>
           <div class="suggestions">
-            <button type="button" data-prompt="인공지능을 초보자도 이해하기 쉽게 설명해 주세요."><span>✦</span><b>주제 설명</b><small>새로운 내용을 쉽게 알아보세요</small></button>
-            <button type="button" data-prompt="회의 일정 변경을 요청하는 짧고 정중한 이메일을 작성해 주세요."><span>✎</span><b>글쓰기 도우미</b><small>이메일, 콘텐츠 및 아이디어</small></button>
-            <button type="button" data-prompt="초보자를 위한 30일 베트남어 학습 계획을 만들어 주세요."><span>✓</span><b>계획 세우기</b><small>목표를 실행 단계로 나눠보세요</small></button>
+            <button type="button" data-prompt="OpenStack 인스턴스를 만드는 절차를 초보자도 이해하기 쉽게 설명해 주세요."><span>✦</span><b>OpenStack 안내</b><small>주요 작업 절차를 확인하세요</small></button>
+            <button type="button" data-prompt="JCloud 사용 중 발생한 문제를 운영자에게 전달할 짧고 정중한 이메일을 작성해 주세요."><span>✎</span><b>글쓰기 도우미</b><small>이메일과 보고서를 작성하세요</small></button>
+            <button type="button" data-prompt="이번 주 OpenStack 학습 계획을 단계별로 만들어 주세요."><span>✓</span><b>계획 세우기</b><small>목표를 실행 단계로 나눠보세요</small></button>
           </div>
         </section>
       </div>
 
       <footer class="composer-wrap">
         <form id="chat-form" class="composer">
-          <textarea id="prompt" rows="1" maxlength="20000" placeholder="Kanana에게 메시지 보내기…" aria-label="메시지"></textarea>
+          <textarea id="prompt" rows="1" maxlength="20000" placeholder="Qwen에게 메시지 보내기…" aria-label="메시지"></textarea>
           <button id="send" type="submit" aria-label="메시지 보내기">↑</button>
           <button id="stop" type="button" class="hidden" aria-label="답변 생성 중지">■</button>
         </form>
-        <p>Kanana가 부정확한 답변을 할 수 있습니다. 중요한 정보는 다시 확인하세요.</p>
+        <p>AI가 부정확한 답변을 할 수 있습니다. 중요한 정보는 다시 확인하세요.</p>
       </footer>
     </section>
   </main>

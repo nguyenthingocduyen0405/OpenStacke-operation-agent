@@ -3,11 +3,11 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const rag = require('./rag');
+const llm = require('./llm');
 
 const HOST = process.env.HOST || '127.0.0.1';
 const PORT = Number(process.env.PORT || 3000);
-const OLLAMA_URL = (process.env.OLLAMA_URL || 'http://127.0.0.1:11434').replace(/\/$/, '');
-const DEFAULT_MODEL = process.env.OLLAMA_MODEL || 'kanana-chat';
+const DEFAULT_MODEL = llm.MODEL;
 const OPENAI_API_KEY = process.env.JCLOUD_API_KEY || '';
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const MIME_TYPES = {
@@ -37,16 +37,6 @@ async function readJson(req) {
     chunks.push(chunk);
   }
   return JSON.parse(Buffer.concat(chunks).toString('utf8'));
-}
-
-async function ollamaJson(endpoint, options = {}) {
-  const { timeout = 5000, ...fetchOptions } = options;
-  const response = await fetch(`${OLLAMA_URL}${endpoint}`, {
-    ...fetchOptions,
-    signal: fetchOptions.signal || AbortSignal.timeout(timeout)
-  });
-  if (!response.ok) throw new Error(`Ollama 오류 ${response.status}.`);
-  return response.json();
 }
 
 function authorized(req) {
@@ -106,6 +96,20 @@ function writeOpenAIChunk(res, id, model, delta, finishReason = null) {
   })}\n\n`);
 }
 
+function chatOptions(body, model, stream, signal) {
+  return {
+    model,
+    profile: body.profile,
+    stream,
+    signal,
+    max_tokens: body.max_tokens,
+    temperature: body.temperature,
+    top_p: body.top_p,
+    top_k: body.top_k,
+    repetition_penalty: body.repetition_penalty
+  };
+}
+
 async function handleOpenAI(req, res, pathname) {
   if (!authorized(req)) {
     return sendJson(res, 401, {
@@ -113,10 +117,13 @@ async function handleOpenAI(req, res, pathname) {
     });
   }
   if (req.method === 'GET' && pathname === '/v1/models') {
-    return sendJson(res, 200, {
-      object: 'list',
-      data: [{ id: DEFAULT_MODEL, object: 'model', created: 0, owned_by: 'jcloud-local' }]
-    });
+    try {
+      return sendJson(res, 200, await llm.models());
+    } catch (error) {
+      return sendJson(res, error.status || 502, {
+        error: { message: error.message, type: 'upstream_error' }
+      });
+    }
   }
   if (req.method !== 'POST' || pathname !== '/v1/chat/completions') {
     return sendJson(res, 404, {
@@ -128,24 +135,21 @@ async function handleOpenAI(req, res, pathname) {
     const body = await readJson(req);
     const model = typeof body.model === 'string' && body.model ? body.model : DEFAULT_MODEL;
     const prepared = await prepareConversation(normalizeMessages(body.messages));
-    const options = {
-      temperature: Number.isFinite(body.temperature) ? body.temperature : 0.7,
-      num_ctx: Number(process.env.OLLAMA_NUM_CTX || 4096)
-    };
+
     if (body.stream === false) {
-      const data = await ollamaJson('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model, messages: prepared.messages, stream: false, options }),
-        timeout: Number(process.env.OLLAMA_TIMEOUT_MS || 120000)
-      });
-      const content = `${data.message?.content || ''}${sourceAppendix(prepared.ragRows)}`;
+      const upstream = await llm.chat(prepared.messages, chatOptions(body, model, false));
+      const data = await upstream.json();
+      const message = data.choices?.[0]?.message;
+      if (!message) throw new Error('LLM API returned an invalid message.');
       return sendJson(res, 200, {
-        id: `chatcmpl-${crypto.randomUUID()}`,
-        object: 'chat.completion',
-        created: Math.floor(Date.now() / 1000),
-        model,
-        choices: [{ index: 0, message: { role: 'assistant', content }, finish_reason: 'stop' }]
+        ...data,
+        choices: [{
+          ...data.choices[0],
+          message: {
+            ...message,
+            content: `${message.content || ''}${sourceAppendix(prepared.ragRows)}`
+          }
+        }]
       });
     }
 
@@ -153,19 +157,10 @@ async function handleOpenAI(req, res, pathname) {
     res.on('close', () => {
       if (!res.writableEnded) controller.abort();
     });
-    const upstream = await fetch(`${OLLAMA_URL}/api/chat`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model, messages: prepared.messages, stream: true, options }),
-      signal: controller.signal
-    });
-    if (!upstream.ok) {
-      const detail = await upstream.text();
-      return sendJson(res, upstream.status, {
-        error: { message: detail || `Ollama error ${upstream.status}.`, type: 'upstream_error' }
-      });
-    }
-
+    const upstream = await llm.chat(
+      prepared.messages,
+      chatOptions(body, model, true, controller.signal)
+    );
     const id = `chatcmpl-${crypto.randomUUID()}`;
     res.writeHead(200, {
       'Content-Type': 'text/event-stream; charset=utf-8',
@@ -174,29 +169,28 @@ async function handleOpenAI(req, res, pathname) {
       'X-Accel-Buffering': 'no'
     });
     writeOpenAIChunk(res, id, model, { role: 'assistant' });
-    const decoder = new TextDecoder();
-    let buffer = '';
-    for await (const chunk of upstream.body) {
-      buffer += decoder.decode(chunk, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop();
-      for (const line of lines) {
-        if (!line.trim()) continue;
-        const data = JSON.parse(line);
-        if (data.message?.content) {
-          writeOpenAIChunk(res, id, model, { content: data.message.content });
-        }
+    let finishReason = 'stop';
+    for await (const event of llm.sseEvents(upstream.body)) {
+      if (event === '[DONE]') continue;
+      const data = JSON.parse(event);
+      const choice = data.choices?.[0];
+      if (!choice) continue;
+      if (choice.finish_reason) finishReason = choice.finish_reason;
+      if (choice.delta && Object.keys(choice.delta).length) {
+        writeOpenAIChunk(res, id, model, choice.delta);
       }
     }
     const appendix = sourceAppendix(prepared.ragRows);
     if (appendix) writeOpenAIChunk(res, id, model, { content: appendix });
-    writeOpenAIChunk(res, id, model, {}, 'stop');
+    writeOpenAIChunk(res, id, model, {}, finishReason);
     res.write('data: [DONE]\n\n');
     return res.end();
   } catch (error) {
     if (error.name === 'AbortError') return;
     if (!res.headersSent) {
-      return sendJson(res, 502, { error: { message: error.message, type: 'server_error' } });
+      return sendJson(res, error.status || 502, {
+        error: { message: error.message, type: 'server_error' }
+      });
     }
     return res.end();
   }
@@ -205,18 +199,26 @@ async function handleOpenAI(req, res, pathname) {
 async function handleApi(req, res, pathname) {
   if (req.method === 'GET' && pathname === '/api/health') {
     try {
-      const data = await ollamaJson('/api/version');
-      return sendJson(res, 200, { ok: true, version: data.version, defaultModel: DEFAULT_MODEL });
+      const data = await llm.health();
+      return sendJson(res, 200, {
+        ok: data.proxy === 'ok' && data.backend === 'ok' && data.ready_workers > 0,
+        backend: data.backend,
+        readyWorkers: data.ready_workers,
+        defaultModel: DEFAULT_MODEL
+      });
     } catch (error) {
-      return sendJson(res, 503, { ok: false, error: `${OLLAMA_URL}의 Ollama에 연결할 수 없습니다.` });
+      return sendJson(res, 503, {
+        ok: false,
+        error: `LLM API에 연결할 수 없습니다: ${error.message}`
+      });
     }
   }
 
   if (req.method === 'GET' && pathname === '/api/models') {
     try {
-      const data = await ollamaJson('/api/tags');
+      const data = await llm.models();
       return sendJson(res, 200, {
-        models: (data.models || []).map(({ name, size, modified_at }) => ({ name, size, modified_at })),
+        models: (data.data || []).map(({ id, created }) => ({ name: id, created_at: created })),
         defaultModel: DEFAULT_MODEL
       });
     } catch (error) {
@@ -239,68 +241,48 @@ async function handleApi(req, res, pathname) {
         if (!res.writableEnded) controller.abort();
       });
       const prepared = await prepareConversation(messages);
-
-      const upstream = await fetch(`${OLLAMA_URL}/api/chat`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: typeof body.model === 'string' && body.model ? body.model : DEFAULT_MODEL,
-          messages: prepared.messages,
-          stream: true,
-          options: { temperature: 0.7, num_ctx: 4096 }
-        }),
-        signal: controller.signal
-      });
-
-      if (!upstream.ok) {
-        const detail = await upstream.text();
-        return sendJson(res, upstream.status, { error: detail || `Ollama 오류 ${upstream.status}.` });
-      }
+      const model = typeof body.model === 'string' && body.model ? body.model : DEFAULT_MODEL;
+      const upstream = await llm.chat(
+        prepared.messages,
+        chatOptions(body, model, true, controller.signal)
+      );
 
       res.writeHead(200, {
         'Content-Type': 'application/x-ndjson; charset=utf-8',
         'Cache-Control': 'no-cache',
         'X-Content-Type-Options': 'nosniff'
       });
-      const decoder = new TextDecoder();
-      let streamBuffer = '';
-      let finalLine = '';
-      for await (const chunk of upstream.body) {
-        streamBuffer += decoder.decode(chunk, { stream: true });
-        const lines = streamBuffer.split('\n');
-        streamBuffer = lines.pop();
-        for (const line of lines) {
-          if (!line) continue;
-          try {
-            if (JSON.parse(line).done) finalLine = line;
-            else res.write(`${line}\n`);
-          } catch {
-            res.write(`${line}\n`);
-          }
-        }
-      }
-      streamBuffer += decoder.decode();
-      if (streamBuffer) {
-        try {
-          if (JSON.parse(streamBuffer).done) finalLine = streamBuffer;
-          else res.write(`${streamBuffer}\n`);
-        } catch {
-          res.write(`${streamBuffer}\n`);
+      for await (const event of llm.sseEvents(upstream.body)) {
+        if (event === '[DONE]') continue;
+        const data = JSON.parse(event);
+        const content = data.choices?.[0]?.delta?.content;
+        if (content) {
+          res.write(`${JSON.stringify({
+            model,
+            created_at: new Date().toISOString(),
+            message: { role: 'assistant', content },
+            done: false
+          })}\n`);
         }
       }
       if (prepared.ragRows.length) {
         res.write(`${JSON.stringify({
-          model: typeof body.model === 'string' && body.model ? body.model : DEFAULT_MODEL,
+          model,
           created_at: new Date().toISOString(),
           message: { role: 'assistant', content: sourceAppendix(prepared.ragRows) },
           done: false
         })}\n`);
       }
-      if (finalLine) res.write(`${finalLine}\n`);
+      res.write(`${JSON.stringify({
+        model,
+        created_at: new Date().toISOString(),
+        message: { role: 'assistant', content: '' },
+        done: true
+      })}\n`);
       return res.end();
     } catch (error) {
       if (error.name === 'AbortError') return;
-      if (!res.headersSent) return sendJson(res, 502, { error: error.message });
+      if (!res.headersSent) return sendJson(res, error.status || 502, { error: error.message });
       return res.end();
     }
   }
@@ -337,6 +319,6 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(PORT, HOST, () => {
-  console.log(`Kanana Chat 실행 중: http://${HOST}:${PORT}`);
-  console.log(`Ollama API: ${OLLAMA_URL} | 기본 모델: ${DEFAULT_MODEL}`);
+  console.log(`JCloud Agent 실행 중: http://${HOST}:${PORT}`);
+  console.log(`LLM API: ${llm.BASE_URL} | 기본 모델: ${DEFAULT_MODEL} | profile: ${llm.PROFILE}`);
 });

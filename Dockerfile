@@ -7,7 +7,7 @@ ENV HOST=0.0.0.0
 COPY --chown=node:node package.json package-lock.json ./
 RUN npm ci --omit=dev
 
-COPY --chown=node:node server.js rag.js ./
+COPY --chown=node:node server.js rag.js llm.js ./
 COPY --chown=node:node public ./public
 COPY --chown=node:node scripts ./scripts
 

@@ -20,8 +20,6 @@ services:
   ollama:
     image: ollama/ollama:latest
     environment:
-      # The CPU VM has 8 GiB RAM. Loading the chat and embedding runners at
-      # the same time can trigger the kernel OOM killer and surface as an EOF.
       OLLAMA_MAX_LOADED_MODELS: ${OLLAMA_MAX_LOADED_MODELS:-1}
       OLLAMA_NUM_PARALLEL: ${OLLAMA_NUM_PARALLEL:-1}
     volumes:
@@ -40,18 +38,14 @@ services:
     image: ollama/ollama:latest
     environment:
       OLLAMA_HOST: http://ollama:11434
-    volumes:
-      - ./Modelfile:/model/Modelfile:ro
     entrypoint:
       - /bin/sh
       - -c
     command:
       - |
         set -eu
-        ollama show ${OLLAMA_MODEL:-kanana-chat} >/dev/null 2>&1 || \
-          ollama create ${OLLAMA_MODEL:-kanana-chat} -f /model/Modelfile
-        ollama show embeddinggemma >/dev/null 2>&1 || \
-          ollama pull embeddinggemma
+        ollama show ${OLLAMA_EMBED_MODEL:-embeddinggemma} >/dev/null 2>&1 || \
+          ollama pull ${OLLAMA_EMBED_MODEL:-embeddinggemma}
     depends_on:
       ollama:
         condition: service_healthy
@@ -61,11 +55,14 @@ services:
     build:
       context: .
     environment:
+      LLM_BASE_URL: ${LLM_BASE_URL:-http://114.70.193.174:9000/v1}
+      LLM_API_KEY: ${LLM_API_KEY:?Set LLM_API_KEY in .env}
+      LLM_MODEL: ${LLM_MODEL:-qwen3.8-27b}
+      LLM_PROFILE: ${LLM_PROFILE:-ko-direct}
+      LLM_TIMEOUT_MS: ${LLM_TIMEOUT_MS:-300000}
+      LLM_MAX_RETRIES: ${LLM_MAX_RETRIES:-3}
       OLLAMA_URL: ${OLLAMA_URL:-http://ollama:11434}
-      OLLAMA_MODEL: ${OLLAMA_MODEL:-kanana-chat}
-      OLLAMA_NUM_CTX: ${OLLAMA_NUM_CTX:-4096}
-      OLLAMA_TIMEOUT_MS: ${OLLAMA_TIMEOUT_MS:-300000}
-      OLLAMA_EMBED_MODEL: embeddinggemma
+      OLLAMA_EMBED_MODEL: ${OLLAMA_EMBED_MODEL:-embeddinggemma}
       DATABASE_URL: postgresql://jcloud:${POSTGRES_PASSWORD:-local-postgres-password}@postgres:5432/jcloud_rag
       JCLOUD_API_KEY: ${JCLOUD_API_KEY:-local-jcloud-key}
     volumes:
@@ -98,7 +95,7 @@ services:
       ENABLE_SIGNUP: 'false'
       WEBUI_SECRET_KEY: ${WEBUI_SECRET_KEY:-local-open-webui-secret}
       RAG_EMBEDDING_ENGINE: ollama
-      RAG_EMBEDDING_MODEL: embeddinggemma
+      RAG_EMBEDDING_MODEL: ${OLLAMA_EMBED_MODEL:-embeddinggemma}
       RAG_OLLAMA_BASE_URL: ${OLLAMA_URL:-http://ollama:11434}
     volumes:
       - open-webui-data:/app/backend/data
