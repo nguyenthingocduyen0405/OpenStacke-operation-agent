@@ -1,8 +1,8 @@
 {
-  "rewrites": [
+  "routes": [
     {
-      "source": "/(.*)",
-      "destination": "https://sold-tackle-westminster-partnership.trycloudflare.com/$1"
+      "src": "/(.*)",
+      "dest": "https://sold-tackle-westminster-partnership.trycloudflare.com/$1"
     }
   ]
 }
