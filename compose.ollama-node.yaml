@@ -1,0 +1,4 @@
+services:
+  ollama:
+    ports:
+      - ${OLLAMA_BIND_IP:-127.0.0.1}:11434:11434
