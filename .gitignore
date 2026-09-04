@@ -8,3 +8,4 @@ ssh_known_hosts
 *.zip
 .docker-local/
 data/*.jsonl
+!data/ui-actions.ko.jsonl
