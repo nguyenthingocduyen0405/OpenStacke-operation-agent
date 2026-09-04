@@ -91,7 +91,6 @@ services:
       ENABLE_OLLAMA_API: 'false'
       ENABLE_PERSISTENT_CONFIG: 'false'
       ENABLE_SIGNUP: 'false'
-      ENABLE_WEBSOCKET_SUPPORT: 'false'
       WEBUI_SECRET_KEY: ${WEBUI_SECRET_KEY:-local-open-webui-secret}
       RAG_EMBEDDING_ENGINE: ollama
       RAG_EMBEDDING_MODEL: embeddinggemma

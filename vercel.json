@@ -1,8 +1,0 @@
-{
-  "routes": [
-    {
-      "src": "/(.*)",
-      "dest": "https://sold-tackle-westminster-partnership.trycloudflare.com/$1"
-    }
-  ]
-}
