@@ -2,7 +2,7 @@
   "rewrites": [
     {
       "source": "/(.*)",
-      "destination": "https://beyond-currency-connecticut-jaguar.trycloudflare.com/$1"
+      "destination": "https://sold-tackle-westminster-partnership.trycloudflare.com/$1"
     }
   ]
 }
