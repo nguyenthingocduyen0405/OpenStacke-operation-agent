@@ -6,10 +6,11 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
-    "check": "node --check server.js && node --check llm.js && node --check public/app.js",
+    "check": "node --check server.js && node --check llm.js && node --check public/app.js && node --check scripts/content-chunker.js && node --check scripts/build-corpus.js",
     "test": "node --test",
     "rag:ingest": "node scripts/ingest-rag.js",
-    "rag:query": "node scripts/query-rag.js"
+    "rag:query": "node scripts/query-rag.js",
+    "rag:build": "node scripts/build-corpus.js"
   },
   "engines": {
     "node": ">=20"
